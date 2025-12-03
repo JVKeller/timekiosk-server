@@ -8,7 +8,7 @@ import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';
 // addRxPlugin(RxDBReplicationCouchDBPlugin); // Not strictly needed for custom HTTP sync but good to have if we switch
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3333;
 
 // Middleware
 app.use(cors());
