@@ -1,21 +1,39 @@
 {
-    "name": "timekiosk-server",
-    "version": "1.0.0",
-    "description": "Sync server for TimeKiosk using RxDB and Express",
-    "main": "server.js",
-    "type": "module",
-    "scripts": {
-        "start": "node server.js",
-        "dev": "node --watch server.js"
-    },
-    "keywords": [],
-    "author": "",
-    "license": "ISC",
-    "dependencies": {
-        "express": "^4.18.2",
-        "rxdb": "^15.18.0",
-        "rxjs": "^7.8.1",
-        "cors": "^2.8.5",
-        "body-parser": "^1.20.2"
-    }
+  "name": "timekiosk-server",
+  "version": "1.0.0",
+  "description": "Sync server for TimeKiosk using RxDB and Express",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "mocha",
+    "certbot": "./scripts/setup-certbot.sh"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.20.4",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.22.1",
+    "helmet": "^8.1.0",
+    "pg": "^8.16.3",
+    "rxdb": "^16.21.1",
+    "rxjs": "^7.8.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JVKeller/timekiosk-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JVKeller/timekiosk-server/issues"
+  },
+  "homepage": "https://github.com/JVKeller/timekiosk-server#readme",
+  "devDependencies": {
+    "chai": "^6.2.1",
+    "mocha": "^11.7.5",
+    "supertest": "^7.1.4"
+  }
 }

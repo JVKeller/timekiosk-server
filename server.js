@@ -1,18 +1,45 @@
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import dotenv from 'dotenv';
+import helmet from 'helmet';
+import fs from 'fs';
+import https from 'https';
 import { createRxDatabase, addRxPlugin } from 'rxdb';
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';
 
-// Enable plugins
-// addRxPlugin(RxDBReplicationCouchDBPlugin); // Not strictly needed for custom HTTP sync but good to have if we switch
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3333;
 
+// TLS certificates
+const tlsCertPath = process.env.TLS_CERT || './certs/cert.pem';
+const tlsKeyPath = process.env.TLS_KEY || './certs/key.pem';
+
+let httpsOptions = {};
+try {
+    if (fs.existsSync(tlsCertPath) && fs.existsSync(tlsKeyPath)) {
+        httpsOptions = {
+            cert: fs.readFileSync(tlsCertPath),
+            key: fs.readFileSync(tlsKeyPath),
+        };
+    } else {
+        console.warn("TLS certificates not found. Running in HTTP mode (not secure for production).");
+    }
+} catch (error) {
+    console.error(`Error loading TLS certificates:`, error.message);
+}
+
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: true, // Allow any origin
+    credentials: true, // Allow cookies/headers
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(bodyParser.json({ limit: '50mb' }));
+app.use(helmet());
 
 // Database Schemas (Matching Client)
 const schemas = {
@@ -101,6 +128,8 @@ const schemas = {
 let db;
 
 async function initDB() {
+    // Using Memory storage for now to ensure compatibility. 
+    // In production, switch this to a persistent storage adapter (e.g. FoundationDB, MongoDB, or filesystem)
     db = await createRxDatabase({
         name: 'timekiosk_server_db',
         storage: getRxStorageMemory()
@@ -108,128 +137,122 @@ async function initDB() {
 
     await db.addCollections({
         employees: { schema: schemas.employee },
-        time_records: { schema: schemas.time_record },
+        timerecords: { schema: schemas.time_record }, // Corrected name
         locations: { schema: schemas.location },
         departments: { schema: schemas.department },
         settings: { schema: schemas.settings }
     });
 
-    console.log('Server Database Initialized');
+    console.log('Server Database Initialized (RxDB Memory)');
 }
 
 initDB();
 
-// Sync Endpoints
-// We need endpoints for EACH collection or a generic one.
-// For simplicity, let's do a generic one that takes collection name in URL.
+// Authentication Middleware
+const authMiddleware = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.split(' ')[1];
 
-app.post('/sync/:collection/pull', async (req, res) => {
-    const { collection } = req.params;
-    const { checkpoint, limit } = req.body;
+    const expectedToken = process.env.SYNC_TOKEN;
 
-    if (!db[collection]) {
-        return res.status(404).json({ error: 'Collection not found' });
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized: No token provided' });
     }
 
+    // Verify token against env var
+    if (expectedToken && token !== expectedToken) {
+        return res.status(403).json({ error: 'Forbidden: Invalid token' });
+    }
+
+    next();
+};
+
+// REST API Endpoints
+
+// GET All
+app.get('/:collection', authMiddleware, async (req, res) => {
+    const { collection } = req.params;
+    if (!db || !db[collection]) return res.status(404).json({ error: 'Collection not found' });
+
     try {
-        // RxDB internal function to get changes
-        // In a real backend, you'd query your SQL/Mongo DB here.
-        // Since we use RxDB on server too, we can use getChangedDocumentsSince
-
-        // Note: getChangedDocumentsSince is part of RxStorage, but exposed via internal methods or we can just query.
-        // For RxDB-to-RxDB sync via HTTP, we usually implement the replication protocol.
-        // But here we are manually implementing the "backend" side of the replication-http plugin.
-
-        // The replication-http plugin expects specific response format.
-        // We need to fetch documents modified since the checkpoint.
-
-        const minUpdatedAt = checkpoint ? checkpoint.updatedAt : 0;
-        const lastId = checkpoint ? checkpoint.id : '';
-
-        // This is a simplified query. 
-        // Real implementation needs to handle "updatedAt" and sorting correctly.
-        // RxDB documents have _meta.lwt (Last Write Time) usually.
-
-        // Let's use a simple find for now.
-        // Ideally we should use the storage instance directly to get changes.
-
-        const result = await db[collection].find({
-            selector: {
-                // We need a way to filter by time. 
-                // RxDB adds _meta field but it's internal.
-                // For this prototype, let's assume we just send everything if no checkpoint, 
-                // or we need to add a 'updatedAt' field to our schema if we want efficient sync?
-                // Actually, RxDB's replication-http allows us to define the pull handler on client.
-                // The server just needs to return what the client asks for.
-
-                // If we use RxDB on server, we can use `exportJSON` or similar, but that's for backup.
-
-                // Let's try to use the internal storage to get changes.
-                // db[collection].storageInstance.getChangedDocumentsSince(...)
-            }
-        }).exec();
-
-        // Filter manually for now (inefficient but works for prototype)
-        // We need a reliable way to track changes.
-        // Since we are using RxDB on server, we can just return all docs for now 
-        // and let client handle diffs? No, that's bad for bandwidth.
-
-        // Let's assume the client sends a checkpoint.
-        // For the prototype, we will just return ALL documents and let RxDB client handle conflicts/duplicates.
-        // This is "full sync" every time. Not production ready but "works".
-
-        // Better: Use a timestamp field if available.
-
-        const docs = result.map(d => d.toJSON());
-
-        // Construct new checkpoint
-        const lastDoc = docs[docs.length - 1];
-        const newCheckpoint = lastDoc ? {
-            id: lastDoc.id,
-            updatedAt: new Date().getTime() // Mocking this
-        } : checkpoint;
-
-        res.json({
-            documents: docs,
-            checkpoint: newCheckpoint
-        });
+        const docs = await db[collection].find().exec();
+        res.json(docs.map(d => d.toJSON()));
     } catch (err) {
-        console.error(err);
         res.status(500).json({ error: err.message });
     }
 });
 
-app.post('/sync/:collection/push', async (req, res) => {
-    const { collection } = req.params;
-    const changes = req.body; // Array of documents
-
-    if (!db[collection]) {
-        return res.status(404).json({ error: 'Collection not found' });
-    }
+// GET One
+app.get('/:collection/:id', authMiddleware, async (req, res) => {
+    const { collection, id } = req.params;
+    if (!db || !db[collection]) return res.status(404).json({ error: 'Collection not found' });
 
     try {
-        // Apply changes
-        // changes is usually an array of { newDocumentState, assumedMasterState } or just docs?
-        // The replication-http plugin sends an array of write rows.
-
-        // If we just get an array of docs to upsert:
-        const docs = changes.map(c => c.newDocumentState || c); // Handle both formats if possible
-
-        for (const doc of docs) {
-            await db[collection].upsert(doc);
-        }
-
-        res.json({ ok: true });
+        const doc = await db[collection].findOne(id).exec();
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        res.json(doc.toJSON());
     } catch (err) {
-        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST (Create)
+app.post('/:collection', authMiddleware, async (req, res) => {
+    const { collection } = req.params;
+    if (!db || !db[collection]) return res.status(404).json({ error: 'Collection not found' });
+
+    try {
+        const doc = await db[collection].insert(req.body);
+        res.status(201).json(doc.toJSON());
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PUT (Update/Upsert)
+app.put('/:collection/:id', authMiddleware, async (req, res) => {
+    const { collection, id } = req.params;
+    if (!db || !db[collection]) return res.status(404).json({ error: 'Collection not found' });
+
+    try {
+        const doc = await db[collection].upsert(req.body);
+        res.json(doc.toJSON());
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE
+app.delete('/:collection/:id', authMiddleware, async (req, res) => {
+    const { collection, id } = req.params;
+    if (!db || !db[collection]) return res.status(404).json({ error: 'Collection not found' });
+
+    try {
+        const doc = await db[collection].findOne(id).exec();
+        if (doc) {
+            await doc.remove();
+            res.json({ ok: true });
+        } else {
+            res.status(404).json({ error: 'Document not found' });
+        }
+    } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
 app.get('/', (req, res) => {
-    res.json({ status: 'TimeKiosk Sync Server Running' });
+    res.json({ status: 'TimeKiosk Sync Server Running (REST API)' });
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+// Start Server
+if (httpsOptions.cert) {
+    https.createServer(httpsOptions, app).listen(PORT, () => {
+        console.log(`HTTPS Server running on port ${PORT}`);
+    });
+} else {
+    app.listen(PORT, () => {
+        console.log(`HTTP Server running on port ${PORT}`);
+    });
+}
+
+export default app;
