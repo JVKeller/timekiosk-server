@@ -1,1 +1,27 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Environment & Secrets (NEVER commit these)
+.env
+.env.local
+.env.production
+certs/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Package manager locks (optional - some teams commit these)
+# package-lock.json
+# yarn.lock
