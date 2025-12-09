@@ -115,8 +115,8 @@ async function initDB() {
                 timeout_status INTEGER DEFAULT 7,
                 timeout_timecard INTEGER DEFAULT 15,
                 timeout_confirmation INTEGER DEFAULT 7,
-                timeout_admin_dashboard INTEGER DEFAULT 600,
-                timeout_admin_login INTEGER DEFAULT 30,
+                timeout_admin_dashboard INTEGER DEFAULT 60,
+                timeout_admin_login INTEGER DEFAULT 10,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -133,8 +133,8 @@ async function initDB() {
             await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_status INTEGER DEFAULT 7`);
             await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_timecard INTEGER DEFAULT 15`);
             await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_confirmation INTEGER DEFAULT 7`);
-            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_admin_dashboard INTEGER DEFAULT 600`);
-            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_admin_login INTEGER DEFAULT 30`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_admin_dashboard INTEGER DEFAULT 60`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_admin_login INTEGER DEFAULT 10`);
         } catch (e) {
             console.log('Migration check skipped or failed:', e.message);
         }
