@@ -108,10 +108,36 @@ async function initDB() {
                 logo_url TEXT,
                 week_start_day INTEGER DEFAULT 0,
                 remote_db_url TEXT,
+                enable_screen_saver BOOLEAN DEFAULT true,
+                kiosk_location_id VARCHAR(100),
+                clock_format VARCHAR(10) DEFAULT '12',
+                allow_employee_photo_upload BOOLEAN DEFAULT false,
+                timeout_status INTEGER DEFAULT 7,
+                timeout_timecard INTEGER DEFAULT 15,
+                timeout_confirmation INTEGER DEFAULT 7,
+                timeout_admin_dashboard INTEGER DEFAULT 600,
+                timeout_admin_login INTEGER DEFAULT 30,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+        // Migrations: Add columns if they don't exist (Quick & Dirty implementation for dev)
+        try {
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS enable_screen_saver BOOLEAN DEFAULT true`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS kiosk_location_id VARCHAR(100)`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS clock_format VARCHAR(10) DEFAULT '12'`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS allow_employee_photo_upload BOOLEAN DEFAULT false`);
+
+            // Timer migrations
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_status INTEGER DEFAULT 7`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_timecard INTEGER DEFAULT 15`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_confirmation INTEGER DEFAULT 7`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_admin_dashboard INTEGER DEFAULT 600`);
+            await client.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS timeout_admin_login INTEGER DEFAULT 30`);
+        } catch (e) {
+            console.log('Migration check skipped or failed:', e.message);
+        }
 
         // Check if we need to seed initial data
         const empCheck = await client.query('SELECT COUNT(*) FROM employees');
@@ -204,7 +230,16 @@ function dbToApi(row, collection) {
             id: row.id,
             logoUrl: row.logo_url,
             weekStartDay: row.week_start_day,
-            remoteDbUrl: row.remote_db_url
+            remoteDbUrl: row.remote_db_url,
+            enableScreenSaver: row.enable_screen_saver,
+            kioskLocationId: row.kiosk_location_id,
+            clockFormat: row.clock_format,
+            allowEmployeePhotoUpload: row.allow_employee_photo_upload,
+            timeoutStatus: row.timeout_status,
+            timeoutTimecard: row.timeout_timecard,
+            timeoutConfirmation: row.timeout_confirmation,
+            timeoutAdminDashboard: row.timeout_admin_dashboard,
+            timeoutAdminLogin: row.timeout_admin_login
         };
     }
     return row;
@@ -215,7 +250,7 @@ const authMiddleware = (req, res, next) => {
     const authHeader = req.headers.authorization;
     const token = authHeader && authHeader.split(' ')[1];
 
-    const expectedToken = process.env.SYNC_TOKEN;
+    const expectedToken = process.env.SERVER_SECRET;
 
     if (!token) {
         return res.status(401).json({ error: 'Unauthorized: No token provided' });
@@ -234,6 +269,16 @@ const validCollections = ['employees', 'timerecords', 'locations', 'departments'
 // Health check (no auth required)
 app.get('/', (req, res) => {
     res.json({ status: 'TimeKiosk Sync Server Running (PostgreSQL)' });
+});
+
+// Verify Auth
+app.get('/verify', authMiddleware, (req, res) => {
+    res.json({ ok: true, status: 'Authorized' });
+});
+
+// Server Time (Authenticated or Public? Public is better for sync)
+app.get('/time', (req, res) => {
+    res.json({ time: new Date().toISOString() });
 });
 
 // GET All
@@ -299,8 +344,15 @@ app.post('/:collection', authMiddleware, async (req, res) => {
             query = `INSERT INTO departments (id, name) VALUES ($1, $2) RETURNING *`;
             values = [data.id, data.name];
         } else if (collection === 'settings') {
-            query = `INSERT INTO settings (id, logo_url, week_start_day, remote_db_url) VALUES ($1, $2, $3, $4) RETURNING *`;
-            values = [data.id, data.logoUrl, data.weekStartDay, data.remoteDbUrl];
+            query = `INSERT INTO settings (
+                id, logo_url, week_start_day, remote_db_url, enable_screen_saver, kiosk_location_id, clock_format, allow_employee_photo_upload,
+                timeout_status, timeout_timecard, timeout_confirmation, timeout_admin_dashboard, timeout_admin_login
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`;
+            values = [
+                data.id, data.logoUrl, data.weekStartDay, data.remoteDbUrl,
+                data.enableScreenSaver, data.kioskLocationId, data.clockFormat, data.allowEmployeePhotoUpload,
+                data.timeoutStatus, data.timeoutTimecard, data.timeoutConfirmation, data.timeoutAdminDashboard, data.timeoutAdminLogin
+            ];
         }
 
         const result = await pool.query(query, values);
@@ -352,11 +404,30 @@ app.put('/:collection/:id', authMiddleware, async (req, res) => {
                      RETURNING *`;
             values = [data.id || id, data.name];
         } else if (collection === 'settings') {
-            query = `INSERT INTO settings (id, logo_url, week_start_day, remote_db_url) VALUES ($1, $2, $3, $4)
-                     ON CONFLICT (id) DO UPDATE SET logo_url = EXCLUDED.logo_url, week_start_day = EXCLUDED.week_start_day,
-                     remote_db_url = EXCLUDED.remote_db_url, updated_at = CURRENT_TIMESTAMP
+            query = `INSERT INTO settings (
+                id, logo_url, week_start_day, remote_db_url, enable_screen_saver, kiosk_location_id, clock_format, allow_employee_photo_upload,
+                timeout_status, timeout_timecard, timeout_confirmation, timeout_admin_dashboard, timeout_admin_login
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                     ON CONFLICT (id) DO UPDATE SET 
+                     logo_url = EXCLUDED.logo_url, 
+                     week_start_day = EXCLUDED.week_start_day,
+                     remote_db_url = EXCLUDED.remote_db_url,
+                     enable_screen_saver = EXCLUDED.enable_screen_saver,
+                     kiosk_location_id = EXCLUDED.kiosk_location_id,
+                     clock_format = EXCLUDED.clock_format,
+                     allow_employee_photo_upload = EXCLUDED.allow_employee_photo_upload,
+                     timeout_status = EXCLUDED.timeout_status,
+                     timeout_timecard = EXCLUDED.timeout_timecard,
+                     timeout_confirmation = EXCLUDED.timeout_confirmation,
+                     timeout_admin_dashboard = EXCLUDED.timeout_admin_dashboard,
+                     timeout_admin_login = EXCLUDED.timeout_admin_login,
+                     updated_at = CURRENT_TIMESTAMP
                      RETURNING *`;
-            values = [data.id || id, data.logoUrl, data.weekStartDay, data.remoteDbUrl];
+            values = [
+                data.id || id, data.logoUrl, data.weekStartDay, data.remoteDbUrl,
+                data.enableScreenSaver, data.kioskLocationId, data.clockFormat, data.allowEmployeePhotoUpload,
+                data.timeoutStatus, data.timeoutTimecard, data.timeoutConfirmation, data.timeoutAdminDashboard, data.timeoutAdminLogin
+            ];
         }
 
         const result = await pool.query(query, values);
